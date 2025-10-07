@@ -1,0 +1,558 @@
+@startuml Class Diagram - Complete System
+
+' Title
+title Location-Based Services Search System - Class Diagram
+
+' Skinparam
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+
+' ==================== ENTITIES ====================
+package "Entities" {
+
+  enum UserRole {
+    USER
+    ADMIN
+  }
+
+  enum UserStatus {
+    ACTIVE
+    INACTIVE
+    SUSPENDED
+  }
+
+  class User {
+    +id: string
+    +email: string
+    -password: string
+    +name: string
+    +phone: string | null
+    +role: UserRole
+    +status: UserStatus
+    +avatar: string | null
+    +emailVerified: boolean
+    +lastLoginAt: Date | null
+    +createdAt: Date
+    +updatedAt: Date
+    +deletedAt: Date | null
+    --Relations--
+    +refreshTokens: RefreshToken[]
+    +passwordResetTokens: PasswordResetToken[]
+  }
+
+  class RefreshToken {
+    +id: string
+    +token: string
+    +userId: string
+    +deviceInfo: any | null
+    +ipAddress: string | null
+    +expiresAt: Date
+    +isRevoked: boolean
+    +revokedAt: Date | null
+    +createdAt: Date
+    --Relations--
+    +user: User
+  }
+
+  class PasswordResetToken {
+    +id: string
+    +token: string
+    +userId: string
+    +expiresAt: Date
+    +isUsed: boolean
+    +usedAt: Date | null
+    +createdAt: Date
+    --Relations--
+    +user: User
+  }
+
+  enum ServiceStatus {
+    ACTIVE
+    INACTIVE
+    PENDING
+    CLOSED
+  }
+
+  class Service {
+    +id: string
+    +name: string
+    +description: string | null
+    +serviceTypeId: string
+    +location: string (POINT)
+    +latitude: number
+    +longitude: number
+    +address: string | null
+    +city: string | null
+    +state: string | null
+    +country: string | null
+    +postalCode: string | null
+    +phone: string | null
+    +email: string | null
+    +website: string | null
+    +openingHours: Record<string, any> | null
+    +rating: number | null
+    +reviewCount: number
+    +priceRange: number | null
+    +tags: string[] | null
+    +images: string[] | null
+    +status: ServiceStatus
+    +isVerified: boolean
+    +isFeatured: boolean
+    +viewCount: number
+    +favoriteCount: number
+    +createdAt: Date
+    +updatedAt: Date
+    +deletedAt: Date | null
+    --Relations--
+    +serviceType: ServiceType
+  }
+
+  class ServiceType {
+    +id: string
+    +name: string
+    +slug: string
+    +description: string | null
+    +icon: string | null
+    +isActive: boolean
+    +createdAt: Date
+    +updatedAt: Date
+    --Relations--
+    +services: Service[]
+  }
+
+  class UserLocation {
+    +id: string
+    +userId: string
+    +name: string
+    +address: string
+    +location: any (POINT)
+    +latitude: number
+    +longitude: number
+    +type: string (enum: home/work/other)
+    +isDefault: boolean
+    +createdAt: Date
+    +updatedAt: Date
+    --Relations--
+    +user: User
+  }
+
+  class Favorite {
+    +id: string
+    +userId: string
+    +serviceId: string
+    +notes: string | null
+    +createdAt: Date
+    --Relations--
+    +user: User
+    +service: Service
+  }
+
+  ' Entity relationships
+  User "1" -- "*" RefreshToken : has
+  User "1" -- "*" PasswordResetToken : has
+  User "1" -- "*" UserLocation : has
+  User "1" -- "*" Favorite : has
+  ServiceType "1" -- "*" Service : categorizes
+  Service "1" -- "*" Favorite : has
+}
+
+' ==================== SERVICE INTERFACES ====================
+package "Service Interfaces" {
+
+  interface IAuthService {
+    +register(registerDto: RegisterDto, req?: any): Promise<AuthResponseDto>
+    +login(loginDto: LoginDto, req?: any): Promise<AuthResponseDto>
+    +refresh(userId: string, tokenId: string, req?: any): Promise<AuthResponseDto>
+    +logout(userId: string, tokenId?: string): Promise<void>
+    +validateUser(email: string, password: string): Promise<User | null>
+  }
+
+  interface IUsersService {
+    +findOne(id: string): Promise<User>
+    +findByEmail(email: string): Promise<User | null>
+    +update(id: string, updateUserDto: UpdateUserDto): Promise<User>
+    +changePassword(userId: string, changePasswordDto: ChangePasswordDto): Promise<void>
+    +forgotPassword(forgotPasswordDto: ForgotPasswordDto): Promise<string>
+    +resetPassword(resetPasswordDto: ResetPasswordDto): Promise<void>
+    +remove(id: string): Promise<void>
+  }
+
+  interface IServicesService {
+    +create(createServiceDto: CreateServiceDto): Promise<Service>
+    +search(searchDto: SearchServicesDto): Promise<PaginatedServiceResult>
+    +searchNearby(latitude: number, longitude: number, radiusInMeters?: number, limit?: number): Promise<ServiceSearchResult[]>
+    +findOne(id: string): Promise<Service>
+    +findAll(page?: number, limit?: number): Promise<PaginatedServiceResult>
+    +update(id: string, updateServiceDto: UpdateServiceDto): Promise<Service>
+    +remove(id: string): Promise<void>
+    +getServiceTypes(): Promise<ServiceType[]>
+    +getServiceType(id: string): Promise<ServiceType>
+  }
+
+  interface ILocationsService {
+    +trackLocation(userId: string, createLocationDto: CreateLocationDto): Promise<UserLocation>
+    +getCurrentLocation(userId: string): Promise<UserLocation | null>
+    +getLocationHistory(userId: string, limit?: number): Promise<UserLocation[]>
+    +updateLocation(userId: string, locationId: string, updateLocationDto: UpdateLocationDto): Promise<UserLocation>
+    +deleteLocation(userId: string, locationId: string): Promise<void>
+    +getNearbyUsers(latitude: number, longitude: number, radiusInMeters?: number, limit?: number): Promise<any[]>
+    +getDistanceBetweenLocations(location1Id: string, location2Id: string): Promise<number>
+  }
+
+  interface IFavoritesService {
+    +create(userId: string, createFavoriteDto: CreateFavoriteDto): Promise<Favorite>
+    +findAll(userId: string): Promise<Favorite[]>
+    +findOne(userId: string, id: string): Promise<Favorite>
+    +remove(userId: string, id: string): Promise<void>
+    +isFavorite(userId: string, serviceId: string): Promise<boolean>
+    +getFavoritesByServiceType(userId: string, serviceTypeId: string): Promise<Favorite[]>
+  }
+}
+
+' ==================== SERVICE IMPLEMENTATIONS ====================
+package "Service Implementations" {
+
+  class AuthService {
+    -usersRepository: Repository<User>
+    -refreshTokenRepository: Repository<RefreshToken>
+    -jwtService: JwtService
+    -configService: ConfigService
+    --
+    +register(registerDto: RegisterDto, req?: any): Promise<AuthResponseDto>
+    +login(loginDto: LoginDto, req?: any): Promise<AuthResponseDto>
+    +refresh(userId: string, tokenId: string, req?: any): Promise<AuthResponseDto>
+    +logout(userId: string, tokenId?: string): Promise<void>
+    +validateUser(email: string, password: string): Promise<User | null>
+    -generateTokens(user: User, req: any): Promise<TokenPair>
+    -hashPassword(password: string): Promise<string>
+    -comparePassword(password: string, hash: string): Promise<boolean>
+  }
+
+  class UsersService {
+    -usersRepository: Repository<User>
+    -passwordResetTokenRepository: Repository<PasswordResetToken>
+    --
+    +findOne(id: string): Promise<User>
+    +findByEmail(email: string): Promise<User | null>
+    +update(id: string, updateUserDto: UpdateUserDto): Promise<User>
+    +changePassword(userId: string, changePasswordDto: ChangePasswordDto): Promise<void>
+    +forgotPassword(forgotPasswordDto: ForgotPasswordDto): Promise<string>
+    +resetPassword(resetPasswordDto: ResetPasswordDto): Promise<void>
+    +remove(id: string): Promise<void>
+  }
+
+  class ServicesService {
+    -servicesRepository: Repository<Service>
+    -serviceTypesRepository: Repository<ServiceType>
+    --
+    +create(createServiceDto: CreateServiceDto): Promise<Service>
+    +search(searchDto: SearchServicesDto): Promise<PaginatedServiceResult>
+    +searchNearby(latitude: number, longitude: number, radiusInMeters?: number, limit?: number): Promise<ServiceSearchResult[]>
+    +findOne(id: string): Promise<Service>
+    +findAll(page?: number, limit?: number): Promise<PaginatedServiceResult>
+    +update(id: string, updateServiceDto: UpdateServiceDto): Promise<Service>
+    +remove(id: string): Promise<void>
+    +getServiceTypes(): Promise<ServiceType[]>
+    +getServiceType(id: string): Promise<ServiceType>
+  }
+
+  class LocationsService {
+    -userLocationsRepository: Repository<UserLocation>
+    -dataSource: DataSource
+    --
+    +trackLocation(userId: string, createLocationDto: CreateLocationDto): Promise<UserLocation>
+    +getCurrentLocation(userId: string): Promise<UserLocation | null>
+    +getLocationHistory(userId: string, limit?: number): Promise<UserLocation[]>
+    +updateLocation(userId: string, locationId: string, updateLocationDto: UpdateLocationDto): Promise<UserLocation>
+    +deleteLocation(userId: string, locationId: string): Promise<void>
+    +getNearbyUsers(latitude: number, longitude: number, radiusInMeters?: number, limit?: number): Promise<any[]>
+    +getDistanceBetweenLocations(location1Id: string, location2Id: string): Promise<number>
+  }
+
+  class FavoritesService {
+    -favoritesRepository: Repository<Favorite>
+    -servicesRepository: Repository<Service>
+    --
+    +create(userId: string, createFavoriteDto: CreateFavoriteDto): Promise<Favorite>
+    +findAll(userId: string): Promise<Favorite[]>
+    +findOne(userId: string, id: string): Promise<Favorite>
+    +remove(userId: string, id: string): Promise<void>
+    +isFavorite(userId: string, serviceId: string): Promise<boolean>
+    +getFavoritesByServiceType(userId: string, serviceTypeId: string): Promise<Favorite[]>
+  }
+
+  ' Service implementations
+  AuthService ..|> IAuthService : implements
+  UsersService ..|> IUsersService : implements
+  ServicesService ..|> IServicesService : implements
+  LocationsService ..|> ILocationsService : implements
+  FavoritesService ..|> IFavoritesService : implements
+}
+
+' ==================== CONTROLLERS ====================
+package "Controllers" {
+
+  class AuthController {
+    -authService: IAuthService
+    --
+    +register(registerDto: RegisterDto, req: any): Promise<AuthResponseDto>
+    +login(loginDto: LoginDto, req: any): Promise<AuthResponseDto>
+    +refresh(refreshTokenDto: RefreshTokenDto, req: any): Promise<AuthResponseDto>
+    +logout(user: User): Promise<void>
+  }
+
+  class UsersController {
+    -usersService: IUsersService
+    --
+    +getProfile(user: User): Promise<User>
+    +updateProfile(user: User, updateUserDto: UpdateUserDto): Promise<User>
+    +changePassword(user: User, changePasswordDto: ChangePasswordDto): Promise<void>
+    +forgotPassword(forgotPasswordDto: ForgotPasswordDto): Promise<string>
+    +resetPassword(resetPasswordDto: ResetPasswordDto): Promise<void>
+    +deleteAccount(user: User): Promise<void>
+  }
+
+  class ServicesController {
+    -servicesService: IServicesService
+    --
+    +search(searchDto: SearchServicesDto): Promise<PaginatedServiceResult>
+    +searchNearby(dto: NearbyServicesDto): Promise<any[]>
+    +getServiceTypes(): Promise<ServiceType[]>
+    +getServiceType(id: string): Promise<ServiceType>
+    +create(createServiceDto: CreateServiceDto): Promise<Service>
+    +findAll(dto: PaginationDto): Promise<PaginatedServiceResult>
+    +findOne(id: string): Promise<Service>
+    +update(id: string, updateServiceDto: UpdateServiceDto): Promise<Service>
+    +remove(id: string): Promise<void>
+  }
+
+  class LocationsController {
+    -locationsService: ILocationsService
+    --
+    +trackLocation(user: User, createLocationDto: CreateLocationDto): Promise<UserLocation>
+    +getCurrentLocation(user: User): Promise<UserLocation | null>
+    +getLocationHistory(user: User, dto: LocationHistoryDto): Promise<UserLocation[]>
+    +updateLocation(user: User, locationId: string, updateLocationDto: UpdateLocationDto): Promise<UserLocation>
+    +deleteLocation(user: User, locationId: string): Promise<void>
+    +getNearbyUsers(dto: NearbyUsersDto): Promise<any[]>
+    +getDistance(location1Id: string, location2Id: string): Promise<number>
+  }
+
+  class FavoritesController {
+    -favoritesService: IFavoritesService
+    --
+    +create(user: User, createFavoriteDto: CreateFavoriteDto): Promise<Favorite>
+    +findAll(user: User): Promise<Favorite[]>
+    +findOne(user: User, id: string): Promise<Favorite>
+    +remove(user: User, id: string): Promise<void>
+    +isFavorite(user: User, serviceId: string): Promise<boolean>
+    +getFavoritesByServiceType(user: User, dto: FavoritesByTypeDto): Promise<Favorite[]>
+  }
+
+  class HealthController {
+    -healthCheckService: HealthCheckService
+    -typeOrmHealthIndicator: TypeOrmHealthIndicator
+    --
+    +check(): Promise<HealthCheckResult>
+  }
+
+  ' Controller dependencies on service interfaces
+  AuthController --> IAuthService : uses
+  UsersController --> IUsersService : uses
+  ServicesController --> IServicesService : uses
+  LocationsController --> ILocationsService : uses
+  FavoritesController --> IFavoritesService : uses
+}
+
+' ==================== DTOs ====================
+package "DTOs" {
+
+  class RegisterDto {
+    +email: string
+    +password: string
+    +name: string
+    +phone?: string
+  }
+
+  class LoginDto {
+    +email: string
+    +password: string
+  }
+
+  class AuthResponseDto {
+    +accessToken: string
+    +refreshToken: string
+    +user: User
+  }
+
+  class RefreshTokenDto {
+    +refreshToken: string
+  }
+
+  class UpdateUserDto {
+    +name?: string
+    +phone?: string
+    +avatar?: string
+  }
+
+  class ChangePasswordDto {
+    +currentPassword: string
+    +newPassword: string
+  }
+
+  class CreateServiceDto {
+    +name: string
+    +description?: string
+    +serviceTypeId: string
+    +latitude: number
+    +longitude: number
+    +address?: string
+    +city?: string
+    +state?: string
+    +country?: string
+    +phone?: string
+    +email?: string
+    +website?: string
+    +openingHours?: any
+    +priceRange?: number
+    +tags?: string[]
+    +images?: string[]
+  }
+
+  class UpdateServiceDto {
+    +name?: string
+    +description?: string
+    +serviceTypeId?: string
+    +latitude?: number
+    +longitude?: number
+    +address?: string
+    +status?: ServiceStatus
+    +rating?: number
+  }
+
+  class SearchServicesDto {
+    +latitude: number
+    +longitude: number
+    +radius?: number
+    +serviceTypeId?: string
+    +keyword?: string
+    +tags?: string[]
+    +minRating?: number
+    +page?: number
+    +limit?: number
+  }
+
+  class NearbyServicesDto {
+    +latitude: number
+    +longitude: number
+    +radius?: number
+    +limit?: number
+  }
+
+  class CreateLocationDto {
+    +name: string
+    +address: string
+    +latitude: number
+    +longitude: number
+    +type?: string
+    +isDefault?: boolean
+  }
+
+  class UpdateLocationDto {
+    +name?: string
+    +address?: string
+    +isDefault?: boolean
+  }
+
+  class CreateFavoriteDto {
+    +serviceId: string
+    +notes?: string
+  }
+
+  class PaginationDto {
+    +page?: number
+    +limit?: number
+  }
+}
+
+' ==================== GUARDS ====================
+package "Guards & Strategies" {
+
+  class JwtAuthGuard {
+    +canActivate(context: ExecutionContext): boolean
+  }
+
+  class RefreshJwtAuthGuard {
+    +canActivate(context: ExecutionContext): boolean
+  }
+
+  class RolesGuard {
+    -reflector: Reflector
+    --
+    +canActivate(context: ExecutionContext): boolean
+  }
+
+  class JwtStrategy {
+    -usersRepository: Repository<User>
+    -configService: ConfigService
+    --
+    +validate(payload: any): Promise<User>
+  }
+
+  class RefreshTokenStrategy {
+    -refreshTokenRepository: Repository<RefreshToken>
+    -configService: ConfigService
+    --
+    +validate(payload: any): Promise<any>
+  }
+
+  JwtAuthGuard --> JwtStrategy : uses
+  RefreshJwtAuthGuard --> RefreshTokenStrategy : uses
+}
+
+' ==================== INTERCEPTORS & FILTERS ====================
+package "Common Components" {
+
+  class TransformInterceptor {
+    +intercept(context: ExecutionContext, next: CallHandler): Observable<any>
+  }
+
+  class LoggingInterceptor {
+    -logger: Logger
+    --
+    +intercept(context: ExecutionContext, next: CallHandler): Observable<any>
+  }
+
+  class HttpExceptionFilter {
+    +catch(exception: HttpException, host: ArgumentsHost): void
+  }
+
+  class ValidationPipe {
+    +transform(value: any, metadata: ArgumentMetadata): any
+  }
+}
+
+' Additional relationships
+AuthController ..> RegisterDto : uses
+AuthController ..> LoginDto : uses
+AuthController ..> AuthResponseDto : returns
+ServicesController ..> SearchServicesDto : uses
+ServicesController ..> CreateServiceDto : uses
+LocationsController ..> CreateLocationDto : uses
+FavoritesController ..> CreateFavoriteDto : uses
+
+note bottom of Service
+  Spatial data stored as POINT type
+  with SRID 4326 (WGS84)
+
+  Spatial index on 'location' column
+  for optimized ST_Distance_Sphere queries
+end note
+
+note bottom of IServicesService
+  Dependency Injection Pattern:
+  Controllers depend on interfaces,
+  not concrete implementations
+end note
+
+@enduml

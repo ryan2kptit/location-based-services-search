@@ -1,0 +1,336 @@
+@startuml Sequence Diagram - Search Services with Spatial Query
+
+' Title
+title Search Services with Spatial Query - Detailed Sequence Diagram
+
+' Actors and participants
+actor User
+participant "ServicesController" as Controller
+participant "ValidationPipe" as Validator
+participant "JwtAuthGuard\n(@Public)" as Guard
+participant "IServicesService" as IService
+participant "ServicesService" as Service
+participant "ServiceRepository" as Repo
+participant "QueryBuilder" as QB
+participant "TransformInterceptor" as Transform
+database "MySQL 8.0" as DB
+
+' Sequence flow
+User -> Controller : GET /services/search?\nlatitude=10.762622&\nlongitude=106.660172&\nradius=5000&\nserviceTypeId=...&\nkeyword=coffee&\nminRating=4.0&\npage=1&limit=20
+activate Controller
+
+' Validation
+Controller -> Validator : validate(SearchServicesDto)
+activate Validator
+note right of Validator
+  Transform & Validate:
+  - latitude: number (-90 to 90)
+  - longitude: number (-180 to 180)
+  - radius: number (default: 5000)
+  - serviceTypeId: UUID (optional)
+  - keyword: string (optional)
+  - tags: string[] (optional)
+  - minRating: number 0-5 (optional)
+  - page: number (default: 1)
+  - limit: number 1-100 (default: 20)
+end note
+
+alt Validation fails
+  Validator --> Controller : ValidationException
+  Controller --> User : 400 Bad Request\n{"message": ["validation errors"]}
+  deactivate Validator
+  deactivate Controller
+else Validation passes
+  Validator --> Controller : SearchServicesDto validated
+  deactivate Validator
+end
+
+' Authentication check (optional - endpoint is @Public)
+Controller -> Guard : canActivate(context)
+activate Guard
+note right of Guard
+  @Public decorator:
+  - Authentication optional
+  - Allows both guest and
+    authenticated users
+end note
+
+alt Has JWT token
+  Guard -> Guard : Validate JWT
+  Guard --> Controller : User extracted (optional)
+else No token
+  Guard --> Controller : Continue as guest
+end
+deactivate Guard
+
+' Call service
+Controller -> IService : search(searchDto)
+activate IService
+
+IService -> Service : search(searchDto)
+activate Service
+
+' Parse parameters
+Service -> Service : Parse search parameters
+note right of Service
+  Extract and set defaults:
+  - lat = searchDto.latitude
+  - lng = searchDto.longitude
+  - radius = searchDto.radius || 5000
+  - page = searchDto.page || 1
+  - limit = searchDto.limit || 20
+  - offset = (page - 1) * limit
+end note
+
+' Build spatial query
+Service -> Repo : createQueryBuilder('s')
+activate Repo
+Repo --> Service : QueryBuilder
+deactivate Repo
+
+Service -> QB : Build spatial query
+activate QB
+
+QB -> QB : Add SELECT with ST_Distance_Sphere
+note right of QB
+  SELECT s.*,
+    ST_Distance_Sphere(
+      s.location,
+      ST_PointFromText(
+        'POINT(106.660172 10.762622)',
+        4326
+      )
+    ) as distance
+  FROM services s
+end note
+
+QB -> QB : Add WHERE conditions
+note right of QB
+  WHERE ST_Distance_Sphere(
+      s.location,
+      ST_PointFromText('POINT(lng lat)', 4326)
+    ) <= 5000
+  AND s.status = 'active'
+  AND s.deletedAt IS NULL
+end note
+
+alt Has serviceTypeId filter
+  QB -> QB : Add serviceType filter
+  note right
+    AND s.serviceTypeId = 'uuid'
+  end note
+end
+
+alt Has keyword filter
+  QB -> QB : Add keyword search
+  note right
+    AND (s.name LIKE '%coffee%'
+    OR s.description LIKE '%coffee%')
+  end note
+end
+
+alt Has tags filter
+  QB -> QB : Add tags filter
+  note right
+    AND s.tags IN ('wifi', 'parking')
+  end note
+end
+
+alt Has minRating filter
+  QB -> QB : Add rating filter
+  note right
+    AND s.rating >= 4.0
+  end note
+end
+
+QB -> QB : Add ORDER BY distance
+note right of QB
+  ORDER BY distance ASC
+end note
+
+QB -> QB : Add pagination
+note right of QB
+  LIMIT 20 OFFSET 0
+end note
+
+QB -> QB : Add LEFT JOIN for serviceType
+note right of QB
+  LEFT JOIN service_types st
+  ON s.serviceTypeId = st.id
+end note
+
+deactivate QB
+
+' Execute query
+Service -> Repo : Execute query
+activate Repo
+Repo -> DB : Execute spatial query
+activate DB
+
+note over DB
+  **Optimized with Spatial Index:**
+
+  Index on services.location (SPATIAL)
+  MySQL uses R-tree index for
+  efficient ST_Distance_Sphere
+
+  Query execution:
+  1. Use spatial index to find
+     candidates within bounding box
+  2. Calculate exact distances
+  3. Filter by radius
+  4. Apply other filters
+  5. Sort by distance
+  6. Apply LIMIT/OFFSET
+end note
+
+DB --> Repo : ResultSet with distances
+deactivate DB
+Repo --> Service : ServiceSearchResult[]
+deactivate Repo
+
+' Count total results
+Service -> Repo : createQueryBuilder('s')
+activate Repo
+Repo --> Service : QueryBuilder
+deactivate Repo
+
+Service -> QB : Build count query
+activate QB
+note right of QB
+  SELECT COUNT(*) as total
+  FROM services s
+  WHERE [same conditions as above]
+  (without ORDER BY, LIMIT, OFFSET)
+end note
+deactivate QB
+
+Service -> Repo : Execute count query
+activate Repo
+Repo -> DB : SELECT COUNT(*)
+activate DB
+DB --> Repo : total count
+deactivate DB
+Repo --> Service : totalCount
+deactivate Repo
+
+' Calculate pagination metadata
+Service -> Service : Calculate pagination metadata
+note right of Service
+  {
+    total: totalCount,
+    page: currentPage,
+    limit: itemsPerPage,
+    totalPages: Math.ceil(total / limit)
+  }
+end note
+
+' Transform results
+Service -> Service : Transform results
+note right of Service
+  For each service:
+  - Convert distance from meters
+  - Include service details
+  - Include serviceType relation
+  - Format coordinates
+  - Exclude internal fields
+
+  ServiceSearchResult {
+    ...service,
+    distance: number (meters),
+    serviceType: ServiceType
+  }
+end note
+
+' Build paginated response
+Service -> Service : Build PaginatedServiceResult
+note right of Service
+  {
+    data: ServiceSearchResult[],
+    meta: {
+      total: 142,
+      page: 1,
+      limit: 20,
+      totalPages: 8
+    }
+  }
+end note
+
+Service --> IService : PaginatedServiceResult
+deactivate Service
+IService --> Controller : PaginatedServiceResult
+deactivate IService
+
+' Transform response
+Controller -> Transform : intercept(response)
+activate Transform
+note right of Transform
+  {
+    success: true,
+    data: ServiceSearchResult[],
+    meta: {
+      total: 142,
+      page: 1,
+      limit: 20,
+      totalPages: 8
+    },
+    timestamp: "2025-10-06T..."
+  }
+end note
+Transform --> Controller : Transformed response
+deactivate Transform
+
+' Return to user
+Controller --> User : 200 OK\n{\n  "success": true,\n  "data": [\n    {\n      "id": "...",\n      "name": "Coffee Shop A",\n      "latitude": 10.762622,\n      "longitude": 106.660172,\n      "distance": 245.67,\n      "rating": 4.5,\n      "serviceType": {...},\n      ...\n    },\n    ...\n  ],\n  "meta": {\n    "total": 142,\n    "page": 1,\n    "limit": 20,\n    "totalPages": 8\n  },\n  "timestamp": "2025-10-06T..."\n}
+deactivate Controller
+
+' Alternative flow: No results
+note over User, DB
+  **Alternative Flow: No Results Found**
+
+  If no services match the criteria:
+  - Returns empty array in data
+  - meta.total = 0, totalPages = 0
+  - Still returns 200 OK (not 404)
+
+  {
+    "success": true,
+    "data": [],
+    "meta": {
+      "total": 0,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 0
+    }
+  }
+end note
+
+' Notes
+note bottom
+  **Error Handling:**
+  - 400: Invalid coordinates, invalid filters
+  - 404: Service type not found (if serviceTypeId provided)
+  - 500: Database errors, spatial query errors
+
+  **Performance Optimizations:**
+  - Spatial index (R-tree) on services.location
+  - Index on serviceTypeId, status, isVerified
+  - Pagination limits result set
+  - Excludes POINT field from SELECT (select: false)
+  - Uses QueryBuilder for optimized queries
+  - Separate count query for efficiency
+
+  **Spatial Features:**
+  - ST_Distance_Sphere: Calculates distance in meters
+  - ST_PointFromText: Creates POINT from coordinates
+  - SRID 4326: WGS84 coordinate system
+  - Radius filter: <= specified distance in meters
+  - Results sorted by distance (nearest first)
+
+  **Database:**
+  - MySQL 8.0 with spatial support
+  - InnoDB storage engine
+  - R-tree spatial index for POINT columns
+end note
+
+@enduml

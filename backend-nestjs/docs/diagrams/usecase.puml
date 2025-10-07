@@ -1,0 +1,147 @@
+@startuml Use Case Diagram - Location-Based Services Search System
+
+' Title
+title Location-Based Services Search System - Use Case Diagram
+
+' Define actors
+actor "Guest User" as Guest
+actor "Authenticated User" as User
+actor "System/Scheduler" as System
+
+' Extend authenticated user from guest
+Guest <|-- User
+
+' System boundary
+rectangle "Location-Based Services API System" {
+
+  ' Authentication use cases
+  package "Authentication" {
+    usecase "Register" as UC_Register
+    usecase "Login" as UC_Login
+    usecase "Logout" as UC_Logout
+    usecase "Refresh Token" as UC_RefreshToken
+  }
+
+  ' User Profile use cases
+  package "User Profile Management" {
+    usecase "View Profile" as UC_ViewProfile
+    usecase "Update Profile" as UC_UpdateProfile
+    usecase "Change Password" as UC_ChangePassword
+    usecase "Forgot Password" as UC_ForgotPassword
+    usecase "Reset Password" as UC_ResetPassword
+  }
+
+  ' Location use cases
+  package "Location Management" {
+    usecase "Track Location" as UC_TrackLocation
+    usecase "View Location History" as UC_ViewLocationHistory
+    usecase "Update Location" as UC_UpdateLocation
+    usecase "Delete Location" as UC_DeleteLocation
+    usecase "Find Nearby Users" as UC_FindNearbyUsers
+    usecase "Get Distance Between Locations" as UC_GetDistance
+    usecase "Set Default Location" as UC_SetDefaultLocation
+  }
+
+  ' Services use cases
+  package "Service Discovery" {
+    usecase "Search Services" as UC_SearchServices
+    usecase "View Service Details" as UC_ViewServiceDetails
+    usecase "Get Nearby Services" as UC_GetNearbyServices
+    usecase "Browse Service Types" as UC_BrowseServiceTypes
+    usecase "Filter by Service Type" as UC_FilterByServiceType
+    usecase "Filter by Rating" as UC_FilterByRating
+    usecase "Filter by Tags" as UC_FilterByTags
+    usecase "Sort by Distance" as UC_SortByDistance
+    usecase "View All Services" as UC_ViewAllServices
+  }
+
+  ' Service Management use cases (Admin)
+  package "Service Management" {
+    usecase "Create Service" as UC_CreateService
+    usecase "Update Service" as UC_UpdateService
+    usecase "Delete Service" as UC_DeleteService
+  }
+
+  ' Favorites use cases
+  package "Favorites Management" {
+    usecase "Add to Favorites" as UC_AddFavorite
+    usecase "Remove from Favorites" as UC_RemoveFavorite
+    usecase "View Favorites" as UC_ViewFavorites
+    usecase "Filter Favorites by Type" as UC_FilterFavoritesByType
+    usecase "Check Favorite Status" as UC_CheckFavoriteStatus
+  }
+}
+
+' Guest user associations (Public endpoints)
+Guest --> UC_Register
+Guest --> UC_Login
+Guest --> UC_SearchServices
+Guest --> UC_ViewServiceDetails
+Guest --> UC_GetNearbyServices
+Guest --> UC_BrowseServiceTypes
+Guest --> UC_ViewAllServices
+
+' Authenticated user associations
+User --> UC_Logout
+User --> UC_RefreshToken
+User --> UC_ViewProfile
+User --> UC_UpdateProfile
+User --> UC_ChangePassword
+User --> UC_ForgotPassword
+User --> UC_ResetPassword
+
+User --> UC_TrackLocation
+User --> UC_ViewLocationHistory
+User --> UC_UpdateLocation
+User --> UC_DeleteLocation
+User --> UC_FindNearbyUsers
+User --> UC_GetDistance
+
+User --> UC_AddFavorite
+User --> UC_RemoveFavorite
+User --> UC_ViewFavorites
+User --> UC_FilterFavoritesByType
+User --> UC_CheckFavoriteStatus
+
+User --> UC_CreateService
+User --> UC_UpdateService
+User --> UC_DeleteService
+
+' Include relationships
+UC_SearchServices .> UC_SortByDistance : <<include>>
+UC_SearchServices ..> UC_FilterByServiceType : <<extend>>
+UC_SearchServices ..> UC_FilterByRating : <<extend>>
+UC_SearchServices ..> UC_FilterByTags : <<extend>>
+
+UC_TrackLocation ..> UC_SetDefaultLocation : <<extend>>
+
+UC_Register .> UC_Login : <<include>>
+
+' System/Scheduler associations (Background tasks)
+System --> UC_RefreshToken
+note right of System
+  Background jobs:
+  - Token cleanup
+  - Revoke expired tokens
+  - Maintain location history
+end note
+
+' Notes
+note right of UC_SearchServices
+  Supports spatial queries
+  with ST_Distance_Sphere
+  and multiple filters
+end note
+
+note right of UC_TrackLocation
+  Stores location with
+  POINT geometry type
+  (SRID 4326)
+end note
+
+note right of UC_CreateService
+  Admin only
+  Requires authentication
+end note
+
+@enduml

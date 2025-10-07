@@ -1,0 +1,289 @@
+@startuml Sequence Diagram - Track User Location
+
+' Title
+title Track User Location - Detailed Sequence Diagram
+
+' Actors and participants
+actor User
+participant "LocationsController" as Controller
+participant "JwtAuthGuard" as Guard
+participant "JwtStrategy" as Strategy
+participant "ValidationPipe" as Validator
+participant "ILocationsService" as IService
+participant "LocationsService" as Service
+participant "UserLocationRepository" as Repo
+participant "DataSource\n(QueryRunner)" as DataSource
+participant "TransformInterceptor" as Transform
+database "MySQL 8.0" as DB
+
+' Sequence flow
+User -> Controller : POST /locations/track\n{\n  "latitude": 10.762622,\n  "longitude": 106.660172,\n  "address": "123 Main St",\n  "name": "Home",\n  "type": "home",\n  "isDefault": true\n}
+activate Controller
+
+' Authentication
+Controller -> Guard : canActivate(context)
+activate Guard
+note right of Guard
+  Extract JWT from
+  Authorization header:
+  "Bearer eyJhbGc..."
+end note
+
+Guard -> Strategy : validate(jwtPayload)
+activate Strategy
+note right of Strategy
+  Verify JWT signature with
+  RS256 public key
+
+  Payload: {
+    sub: userId,
+    email: "user@example.com",
+    role: "user"
+  }
+end note
+
+Strategy -> Strategy : Fetch user from database
+Strategy --> Guard : User object
+deactivate Strategy
+
+alt Token invalid or expired
+  Guard --> Controller : UnauthorizedException
+  Controller --> User : 401 Unauthorized\n{"statusCode": 401,\n"message": "Unauthorized"}
+  deactivate Guard
+  deactivate Controller
+else Token valid
+  Guard --> Controller : User attached to request
+  deactivate Guard
+end
+
+' Validation
+Controller -> Validator : validate(CreateLocationDto)
+activate Validator
+note right of Validator
+  Validates:
+  - latitude: number (-90 to 90)
+  - longitude: number (-180 to 180)
+  - address: string (required)
+  - name: string (required)
+  - type: enum (home/work/other)
+  - isDefault: boolean (optional)
+end note
+
+alt Validation fails
+  Validator --> Controller : ValidationException
+  Controller --> User : 400 Bad Request\n{"message": ["validation errors"]}
+  deactivate Validator
+  deactivate Controller
+else Validation passes
+  Validator --> Controller : CreateLocationDto validated
+  deactivate Validator
+end
+
+' Call service
+Controller -> IService : trackLocation(userId, createLocationDto)
+activate IService
+
+IService -> Service : trackLocation(userId, createLocationDto)
+activate Service
+
+' Check if isDefault = true
+alt isDefault = true
+  note right of Service
+    Need to update existing
+    default locations first
+  end note
+
+  Service -> Repo : find({where: {userId, isDefault: true}})
+  activate Repo
+  Repo -> DB : SELECT * FROM user_locations\nWHERE userId = ? AND isDefault = true
+  activate DB
+  DB --> Repo : Existing default locations
+  deactivate DB
+  Repo --> Service : UserLocation[]
+  deactivate Repo
+
+  alt Has existing default locations
+    Service -> DataSource : Create query runner
+    activate DataSource
+    DataSource --> Service : QueryRunner
+    deactivate DataSource
+
+    Service -> DataSource : startTransaction()
+    activate DataSource
+    note right of DataSource
+      Begin database transaction
+      to ensure data consistency
+    end note
+
+    Service -> Repo : update(oldDefaults, {isDefault: false})
+    activate Repo
+    Repo -> DB : UPDATE user_locations\nSET isDefault = false\nWHERE userId = ? AND isDefault = true
+    activate DB
+    DB --> Repo : Updated
+    deactivate DB
+    Repo --> Service : Updated locations
+    deactivate Repo
+    deactivate DataSource
+  end
+end
+
+' Create location with POINT geometry
+Service -> Service : Build location entity
+note right of Service
+  Extract coordinates:
+  - latitude: 10.762622
+  - longitude: 106.660172
+
+  Create POINT geometry:
+  ST_GeomFromText(
+    'POINT(106.660172 10.762622)',
+    4326
+  )
+
+  Note: POINT format is
+  POINT(longitude latitude)
+  NOT POINT(latitude longitude)
+end note
+
+Service -> Repo : create(locationEntity)
+activate Repo
+note right of Repo
+  UserLocation {
+    userId,
+    name: "Home",
+    address: "123 Main St",
+    latitude: 10.762622,
+    longitude: 106.660172,
+    location: POINT(...),
+    type: "home",
+    isDefault: true
+  }
+end note
+Repo --> Service : UserLocation entity
+deactivate Repo
+
+Service -> Repo : save(location)
+activate Repo
+Repo -> DB : INSERT INTO user_locations\n(id, userId, name, address,\nlocation, latitude, longitude,\ntype, isDefault, createdAt, updatedAt)\nVALUES (uuid, ?, ?, ?,\nST_GeomFromText('POINT(106.660172 10.762622)', 4326),\n10.762622, 106.660172,\n'home', true, NOW(), NOW())
+activate DB
+
+note over DB
+  **Spatial Data Storage:**
+
+  - location column: POINT type
+  - SRID 4326 (WGS84)
+  - Stored in binary format
+  - Spatial index for fast queries
+
+  **Indexes:**
+  - PRIMARY KEY on id
+  - INDEX on userId
+  - SPATIAL INDEX on location
+  - INDEX on (latitude, longitude)
+end note
+
+DB --> Repo : UserLocation created
+deactivate DB
+Repo --> Service : UserLocation
+deactivate Repo
+
+alt Transaction active
+  Service -> DataSource : commitTransaction()
+  activate DataSource
+  note right of DataSource
+    Commit transaction:
+    - Old defaults updated
+    - New location created
+    All changes are atomic
+  end note
+  DataSource --> Service : Committed
+  deactivate DataSource
+end
+
+Service --> IService : UserLocation
+deactivate Service
+IService --> Controller : UserLocation
+deactivate IService
+
+' Transform response
+Controller -> Transform : intercept(response)
+activate Transform
+note right of Transform
+  {
+    success: true,
+    data: {
+      id: "uuid",
+      userId: "uuid",
+      name: "Home",
+      address: "123 Main St",
+      latitude: 10.762622,
+      longitude: 106.660172,
+      type: "home",
+      isDefault: true,
+      createdAt: "2025-10-06T...",
+      updatedAt: "2025-10-06T..."
+    },
+    timestamp: "2025-10-06T..."
+  }
+
+  Note: location POINT field
+  excluded (select: false)
+end note
+Transform --> Controller : Transformed response
+deactivate Transform
+
+' Return to user
+Controller --> User : 201 Created\n{\n  "success": true,\n  "data": {\n    "id": "...",\n    "name": "Home",\n    "latitude": 10.762622,\n    "longitude": 106.660172,\n    "isDefault": true,\n    ...\n  },\n  "timestamp": "..."\n}
+deactivate Controller
+
+' Error handling
+note over User, DB
+  **Error Handling Flow:**
+
+  If transaction fails:
+  1. Service catches error
+  2. Calls rollbackTransaction()
+  3. Returns 500 Internal Server Error
+
+  If database constraint violation:
+  - Returns 409 Conflict
+
+  If user not found:
+  - Returns 404 Not Found
+end note
+
+' Notes
+note bottom
+  **Error Handling:**
+  - 400: Invalid coordinates, validation errors
+  - 401: Invalid or missing JWT token
+  - 404: User not found
+  - 409: Database constraint violation
+  - 500: Database errors, transaction errors
+
+  **Security:**
+  - JWT authentication required
+  - User can only track their own location
+  - UserId from authenticated token (not from request body)
+
+  **Data Integrity:**
+  - Transaction ensures atomicity
+  - Only one default location per user
+  - Old defaults automatically updated to false
+  - Spatial index for efficient queries
+
+  **Spatial Features:**
+  - POINT geometry stored with SRID 4326
+  - ST_GeomFromText creates POINT from coordinates
+  - Format: POINT(longitude latitude) - Note order!
+  - Binary storage for efficiency
+  - Enables spatial queries (ST_Distance_Sphere)
+
+  **Use Cases:**
+  - Real-time location tracking
+  - User location history
+  - Find nearby users/services
+  - Distance calculations
+end note
+
+@enduml

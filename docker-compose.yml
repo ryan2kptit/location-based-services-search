@@ -1,0 +1,134 @@
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: lbs-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${DB_NAME:-location_services}
+      MYSQL_USER: ${DB_USERNAME:-lbs_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-user_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend-nestjs/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lbs-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: lbs-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lbs-network
+
+  # NestJS Backend
+  backend:
+    build:
+      context: ./backend-nestjs
+      dockerfile: Dockerfile
+    container_name: lbs-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-3000}
+      API_PREFIX: api/v1
+      # Database
+      DB_TYPE: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USERNAME: ${DB_USERNAME:-lbs_user}
+      DB_PASSWORD: ${DB_PASSWORD:-user_password}
+      DB_DATABASE: ${DB_NAME:-location_services}
+      DB_SYNCHRONIZE: "true"
+      DB_LOGGING: "true"
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_TTL: 300
+      # JWT
+      JWT_ALGORITHM: RS256
+      JWT_ACCESS_TOKEN_EXPIRY: 1h
+      JWT_REFRESH_TOKEN_EXPIRY: 7d
+      JWT_PRIVATE_KEY_PATH: keys/private.key
+      JWT_PUBLIC_KEY_PATH: keys/public.key
+      # Security
+      BCRYPT_ROUNDS: 12
+      # Rate Limiting
+      THROTTLE_TTL: 60000
+      THROTTLE_LIMIT: 100
+      THROTTLE_AUTH_LIMIT: 5
+      # CORS
+      CORS_ORIGIN: "*"
+      CORS_CREDENTIALS: "true"
+      # Logging
+      LOG_LEVEL: info
+      LOG_DIR: logs
+      LOG_MAX_FILES: 14d
+    ports:
+      - "3000:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend-nestjs/logs:/app/logs
+    networks:
+      - lbs-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000/api/v1}
+    container_name: lbs-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    networks:
+      - lbs-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  lbs-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local

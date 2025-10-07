@@ -1,0 +1,306 @@
+@startuml
+
+title Location-Based Services Search System - System Architecture
+
+' ==================== CLIENT LAYER ====================
+package "Client Layer" {
+  component [Mobile App\n(iOS/Android)] as MobileApp
+  component [Web App\n(Browser)] as WebApp
+}
+
+' ==================== API GATEWAY / ENTRY POINT ====================
+package "API Gateway Layer" <<Node>> {
+  component [NestJS Application\n(Port 3000)] as NestApp {
+
+    ' Global middleware and guards
+    rectangle "Global Pipeline" as GlobalPipeline {
+      component [Helmet Middleware] as Helmet
+      component [CORS Middleware] as CORS
+      component [LoggingInterceptor] as LoggingInt
+      component [TransformInterceptor] as TransformInt
+      component [HttpExceptionFilter] as ExceptionFilter
+      component [ValidationPipe] as ValidationPipe
+      component [JwtAuthGuard\n(Global)] as GlobalGuard
+    }
+
+    note right of GlobalPipeline
+      **Request Flow:**
+      1. Helmet (Security headers)
+      2. CORS (Cross-origin)
+      3. LoggingInterceptor (Request/response logging)
+      4. JwtAuthGuard (Authentication)
+      5. ValidationPipe (DTO validation)
+      6. Controller → Service → Repository
+      7. TransformInterceptor (Response formatting)
+      8. ExceptionFilter (Error handling)
+    end note
+  }
+}
+
+' ==================== APPLICATION LAYER (MODULES) ====================
+package "Application Layer - NestJS Modules" {
+
+  ' Auth Module
+  package "AuthModule" {
+    component [AuthController] as AuthCtrl
+    interface "IAuthService" as IAuthSvc
+    component [AuthService] as AuthSvc
+    component [JwtStrategy] as JwtStrat
+    component [RefreshTokenStrategy] as RefreshStrat
+    component [JwtAuthGuard] as JwtGuard
+    component [RefreshJwtAuthGuard] as RefreshGuard
+  }
+
+  ' Users Module
+  package "UsersModule" {
+    component [UsersController] as UsersCtrl
+    interface "IUsersService" as IUsersSvc
+    component [UsersService] as UsersSvc
+  }
+
+  ' Services Module
+  package "ServicesModule" {
+    component [ServicesController] as ServicesCtrl
+    interface "IServicesService" as IServicesSvc
+    component [ServicesService] as ServicesSvc
+  }
+
+  ' Locations Module
+  package "LocationsModule" {
+    component [LocationsController] as LocationsCtrl
+    interface "ILocationsService" as ILocationsSvc
+    component [LocationsService] as LocationsSvc
+  }
+
+  ' Favorites Module
+  package "FavoritesModule" {
+    component [FavoritesController] as FavoritesCtrl
+    interface "IFavoritesService" as IFavoritesSvc
+    component [FavoritesService] as FavoritesSvc
+  }
+
+  ' Health Module
+  package "HealthModule" {
+    component [HealthController] as HealthCtrl
+    component [HealthCheckService] as HealthSvc
+  }
+
+  ' Module dependencies
+  AuthCtrl --> IAuthSvc
+  AuthSvc ..|> IAuthSvc
+
+  UsersCtrl --> IUsersSvc
+  UsersSvc ..|> IUsersSvc
+
+  ServicesCtrl --> IServicesSvc
+  ServicesSvc ..|> IServicesSvc
+
+  LocationsCtrl --> ILocationsSvc
+  LocationsSvc ..|> ILocationsSvc
+
+  FavoritesCtrl --> IFavoritesSvc
+  FavoritesSvc ..|> IFavoritesSvc
+
+  HealthCtrl --> HealthSvc
+
+  ' Inter-module dependencies
+  AuthModule ..> UsersModule : "uses User entity"
+  FavoritesModule ..> ServicesModule : "uses Service entity"
+  FavoritesModule ..> UsersModule : "uses User entity"
+  LocationsModule ..> UsersModule : "uses User entity"
+}
+
+' ==================== GLOBAL MODULES ====================
+package "Global Modules" {
+  component [ConfigModule\n(.env)] as ConfigModule
+  component [TypeOrmModule\n(Database)] as TypeOrmModule
+  component [CacheModule\n(Redis)] as CacheModule
+  component [JwtModule\n(RS256)] as JwtModule
+  component [PassportModule] as PassportModule
+}
+
+' ==================== DATA ACCESS LAYER ====================
+package "Data Access Layer" {
+  component [TypeORM] as TypeORM {
+    component [User Repository] as UserRepo
+    component [RefreshToken Repository] as TokenRepo
+    component [Service Repository] as ServiceRepo
+    component [ServiceType Repository] as ServiceTypeRepo
+    component [UserLocation Repository] as LocationRepo
+    component [Favorite Repository] as FavoriteRepo
+  }
+
+  note right of TypeORM
+    **Repository Pattern:**
+    - Abstraction over database
+    - TypeORM QueryBuilder
+    - Entity relationships
+    - Transactions support
+
+    **Spatial Queries:**
+    - ST_Distance_Sphere
+    - ST_GeomFromText
+    - ST_PointFromText
+  end note
+}
+
+' ==================== DATA STORAGE ====================
+package "Data Storage Layer" {
+  database "MySQL 8.0\n(Port 3306)" as MySQL {
+    storage "users" as users_table
+    storage "refresh_tokens" as tokens_table
+    storage "services" as services_table
+    storage "service_types" as types_table
+    storage "user_locations" as locations_table
+    storage "favorites" as favorites_table
+  }
+
+  database "Redis\n(Port 6379)" as Redis {
+    storage "Cache Store" as cache
+    storage "Session Store" as session
+  }
+
+  note right of MySQL
+    **Features:**
+    - Spatial support (POINT, SRID 4326)
+    - InnoDB storage engine
+    - R-tree spatial indexes
+    - Foreign key constraints
+    - Soft deletes (deletedAt)
+
+    **Spatial Functions:**
+    - ST_Distance_Sphere (distance in meters)
+    - ST_GeomFromText (create geometry)
+    - Spatial indexes for performance
+  end note
+
+  note right of Redis
+    **Use Cases:**
+    - Response caching
+    - Session storage
+    - Rate limiting (future)
+    - Real-time data (future)
+  end note
+}
+
+' ==================== EXTERNAL LIBRARIES ====================
+package "External Libraries" {
+  component [bcrypt\n(Password hashing)] as Bcrypt
+  component [@nestjs/jwt\n(JWT RS256)] as JWT
+  component [@nestjs/passport\n(Auth strategies)] as Passport
+  component [class-validator] as Validator
+  component [class-transformer] as Transformer
+}
+
+' ==================== CONNECTIONS ====================
+
+' Client to API
+MobileApp --> NestApp : HTTPS
+WebApp --> NestApp : HTTPS
+
+' Global pipeline to modules
+NestApp --> AuthModule
+NestApp --> UsersModule
+NestApp --> ServicesModule
+NestApp --> LocationsModule
+NestApp --> FavoritesModule
+NestApp --> HealthModule
+
+' Global modules connections
+AuthModule --> ConfigModule
+AuthModule --> JwtModule
+AuthModule --> PassportModule
+UsersModule --> ConfigModule
+ServicesModule --> ConfigModule
+LocationsModule --> ConfigModule
+FavoritesModule --> ConfigModule
+
+' All modules to TypeORM
+AuthModule --> TypeOrmModule
+UsersModule --> TypeOrmModule
+ServicesModule --> TypeOrmModule
+LocationsModule --> TypeOrmModule
+FavoritesModule --> TypeOrmModule
+
+' All modules to Cache
+AuthModule --> CacheModule
+UsersModule --> CacheModule
+ServicesModule --> CacheModule
+LocationsModule --> CacheModule
+FavoritesModule --> CacheModule
+
+' Services to repositories
+AuthSvc --> UserRepo
+AuthSvc --> TokenRepo
+UsersSvc --> UserRepo
+ServicesSvc --> ServiceRepo
+ServicesSvc --> ServiceTypeRepo
+LocationsSvc --> LocationRepo
+FavoritesSvc --> FavoriteRepo
+FavoritesSvc --> ServiceRepo
+
+' Repositories to database
+UserRepo --> MySQL
+TokenRepo --> MySQL
+ServiceRepo --> MySQL
+ServiceTypeRepo --> MySQL
+LocationRepo --> MySQL
+FavoriteRepo --> MySQL
+
+' TypeORM to databases
+TypeOrmModule --> MySQL : "Connection Pool"
+CacheModule --> Redis : "Connection"
+
+' External libraries
+AuthSvc --> Bcrypt
+AuthSvc --> JWT
+JwtStrat --> Passport
+RefreshStrat --> Passport
+GlobalPipeline --> Validator
+GlobalPipeline --> Transformer
+
+' ==================== NOTES ====================
+note bottom
+  **Technology Stack:**
+  - Framework: NestJS (Node.js, TypeScript)
+  - ORM: TypeORM
+  - Database: MySQL 8.0 (Spatial support)
+  - Cache: Redis 6.x
+  - Authentication: JWT (RS256 asymmetric)
+  - Password: bcrypt (12 salt rounds)
+  - Validation: class-validator, class-transformer
+
+  **Architecture Patterns:**
+  - Layered Architecture (Controller → Service → Repository → Database)
+  - Dependency Injection (NestJS IoC container)
+  - Repository Pattern (Data access abstraction)
+  - DTO Pattern (Data transfer objects)
+  - Strategy Pattern (Passport authentication strategies)
+  - Interface Segregation (Service interfaces)
+  - Guard/Interceptor/Filter Pattern (NestJS pipeline)
+
+  **Key Features:**
+  - JWT Authentication (Access + Refresh tokens)
+  - Spatial queries (ST_Distance_Sphere, POINT geometry)
+  - Location-based search (radius search, nearby services)
+  - Real-time location tracking
+  - Favorites management
+  - Service discovery with filters
+
+  **Security:**
+  - Helmet (Security headers)
+  - CORS (Cross-origin resource sharing)
+  - JWT RS256 (Asymmetric encryption)
+  - bcrypt (Password hashing)
+  - Input validation (class-validator)
+  - SQL injection prevention (TypeORM parameterized queries)
+
+  **Performance:**
+  - Redis caching
+  - Database connection pooling
+  - Spatial indexes (R-tree)
+  - Pagination (limit/offset)
+  - Query optimization (select only needed columns)
+end note
+
+@enduml

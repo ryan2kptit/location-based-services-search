@@ -1,0 +1,273 @@
+@startuml Database Entity-Relationship Diagram
+
+' Title
+title Location-Based Services Search System - Database ER Diagram
+
+' Skinparam
+skinparam linetype ortho
+
+' ==================== USERS TABLE ====================
+entity "users" as users {
+  * **id** : VARCHAR(36) <<PK>>
+  --
+  * email : VARCHAR(255) <<UNIQUE>>
+  * password : VARCHAR(255)
+  * name : VARCHAR(255)
+  phone : VARCHAR(20)
+  * role : ENUM('user', 'admin')
+  * status : ENUM('active', 'inactive', 'suspended')
+  avatar : TEXT
+  * emailVerified : BOOLEAN
+  lastLoginAt : TIMESTAMP
+  * createdAt : TIMESTAMP
+  * updatedAt : TIMESTAMP
+  deletedAt : TIMESTAMP
+  --
+  Indexes:
+  - PRIMARY KEY (id)
+  - UNIQUE INDEX (email)
+}
+
+' ==================== REFRESH TOKENS TABLE ====================
+entity "refresh_tokens" as refresh_tokens {
+  * **id** : VARCHAR(36) <<PK>>
+  --
+  * userId : VARCHAR(36) <<FK>>
+  * token : TEXT
+  * expiresAt : TIMESTAMP
+  * isRevoked : BOOLEAN
+  revokedAt : TIMESTAMP
+  deviceInfo : JSON
+  ipAddress : VARCHAR(45)
+  * createdAt : TIMESTAMP
+  --
+  Indexes:
+  - PRIMARY KEY (id)
+  - UNIQUE INDEX (token) prefix 255
+  - INDEX (userId)
+  - INDEX (expiresAt)
+  --
+  Foreign Keys:
+  - userId -> users.id (CASCADE)
+}
+
+' ==================== PASSWORD RESET TOKENS TABLE ====================
+entity "password_reset_tokens" as password_reset_tokens {
+  * **id** : VARCHAR(36) <<PK>>
+  --
+  * userId : VARCHAR(36) <<FK>>
+  * token : VARCHAR(255) <<UNIQUE>>
+  * expiresAt : TIMESTAMP
+  * isUsed : BOOLEAN
+  usedAt : TIMESTAMP
+  * createdAt : TIMESTAMP
+  --
+  Indexes:
+  - PRIMARY KEY (id)
+  - UNIQUE INDEX (token)
+  - INDEX (userId)
+  --
+  Foreign Keys:
+  - userId -> users.id (CASCADE)
+}
+
+' ==================== SERVICE TYPES TABLE ====================
+entity "service_types" as service_types {
+  * **id** : VARCHAR(36) <<PK>>
+  --
+  * name : VARCHAR(255) <<UNIQUE>>
+  * slug : VARCHAR(255) <<UNIQUE>>
+  description : TEXT
+  icon : VARCHAR(255)
+  * isActive : BOOLEAN
+  * createdAt : TIMESTAMP
+  * updatedAt : TIMESTAMP
+  --
+  Indexes:
+  - PRIMARY KEY (id)
+  - UNIQUE INDEX (name)
+  - UNIQUE INDEX (slug)
+}
+
+' ==================== SERVICES TABLE ====================
+entity "services" as services {
+  * **id** : VARCHAR(36) <<PK>>
+  --
+  * name : VARCHAR(255)
+  description : TEXT
+  * serviceTypeId : VARCHAR(36) <<FK>>
+  * **location** : POINT <<SPATIAL>> (SRID 4326)
+  * latitude : DECIMAL(10, 7)
+  * longitude : DECIMAL(10, 7)
+  address : VARCHAR(500)
+  city : VARCHAR(100)
+  state : VARCHAR(100)
+  country : VARCHAR(100)
+  postalCode : VARCHAR(20)
+  phone : VARCHAR(20)
+  email : VARCHAR(255)
+  website : VARCHAR(500)
+  openingHours : JSON
+  rating : DECIMAL(3, 2)
+  * reviewCount : INT
+  priceRange : DECIMAL(10, 2)
+  tags : TEXT (simple-array)
+  images : TEXT (simple-array)
+  * status : ENUM('active', 'inactive', 'pending', 'closed')
+  * isVerified : BOOLEAN
+  * isFeatured : BOOLEAN
+  * viewCount : INT
+  * favoriteCount : INT
+  * createdAt : TIMESTAMP
+  * updatedAt : TIMESTAMP
+  deletedAt : TIMESTAMP
+  --
+  Indexes:
+  - PRIMARY KEY (id)
+  - **SPATIAL INDEX (location)**
+  - INDEX (serviceTypeId)
+  - INDEX (status)
+  - INDEX (isVerified)
+  - INDEX (rating)
+  --
+  Foreign Keys:
+  - serviceTypeId -> service_types.id (CASCADE)
+}
+
+' ==================== USER LOCATIONS TABLE ====================
+entity "user_locations" as user_locations {
+  * **id** : VARCHAR(36) <<PK>>
+  --
+  * userId : VARCHAR(36) <<FK>>
+  * name : VARCHAR(255)
+  * address : TEXT
+  * **location** : POINT <<SPATIAL>> (SRID 4326)
+  * latitude : DECIMAL(10, 7)
+  * longitude : DECIMAL(10, 7)
+  * type : ENUM('home', 'work', 'other')
+  * isDefault : BOOLEAN
+  * createdAt : TIMESTAMP
+  * updatedAt : TIMESTAMP
+  --
+  Indexes:
+  - PRIMARY KEY (id)
+  - INDEX (userId)
+  - **SPATIAL INDEX (location)**
+  - INDEX (latitude, longitude)
+  --
+  Foreign Keys:
+  - userId -> users.id (CASCADE)
+}
+
+' ==================== FAVORITES TABLE ====================
+entity "favorites" as favorites {
+  * **id** : VARCHAR(36) <<PK>>
+  --
+  * userId : VARCHAR(36) <<FK>>
+  * serviceId : VARCHAR(36) <<FK>>
+  notes : TEXT
+  * createdAt : TIMESTAMP
+  --
+  Indexes:
+  - PRIMARY KEY (id)
+  - **UNIQUE INDEX (userId, serviceId)**
+  - INDEX (userId)
+  - INDEX (serviceId)
+  --
+  Foreign Keys:
+  - userId -> users.id (CASCADE)
+  - serviceId -> services.id (CASCADE)
+}
+
+' ==================== RELATIONSHIPS ====================
+users ||--o{ refresh_tokens : "has many"
+users ||--o{ password_reset_tokens : "has many"
+users ||--o{ user_locations : "has many"
+users ||--o{ favorites : "has many"
+service_types ||--o{ services : "categorizes"
+services ||--o{ favorites : "has many"
+
+' Notes
+note right of services
+  **Spatial Features:**
+  - location: POINT geometry (SRID 4326)
+  - Spatial index for fast ST_Distance_Sphere queries
+  - Stores longitude first: POINT(lng, lat)
+  - WGS84 coordinate reference system
+
+  **Performance:**
+  - R-tree spatial index on location
+  - Compound indexes for common queries
+  - Soft delete with deletedAt timestamp
+
+  **Data Types:**
+  - tags/images: stored as simple-array (comma-separated)
+  - openingHours: JSON object
+  - rating: 0.00 to 5.00
+end note
+
+note right of user_locations
+  **Location Tracking:**
+  - Stores user's location history
+  - POINT geometry with spatial index
+  - Only one default location per user
+  - Supports home/work/other types
+
+  **Spatial Queries:**
+  - Find nearby users
+  - Calculate distance between locations
+  - Track location history
+end note
+
+note right of favorites
+  **Constraints:**
+  - Composite unique (userId, serviceId)
+  - Prevents duplicate favorites
+  - Cascade delete on user/service removal
+
+  **Use Cases:**
+  - User's favorite services
+  - Filter favorites by service type
+  - Quick access to saved places
+end note
+
+note right of refresh_tokens
+  **Security:**
+  - Tokens stored hashed
+  - Tracks device info and IP
+  - Automatic expiry and cleanup
+  - Revocation support
+
+  **Indexes:**
+  - Prefix index on token (first 255 chars)
+  - Index on expiresAt for cleanup queries
+end note
+
+note bottom
+  **Database Configuration:**
+  - Database: MySQL 8.0
+  - Storage Engine: InnoDB
+  - Character Set: utf8mb4
+  - Collation: utf8mb4_unicode_ci
+  - Timezone: UTC
+
+  **Spatial Data:**
+  - SRID 4326: WGS84 (GPS coordinates)
+  - Functions: ST_Distance_Sphere, ST_GeomFromText, ST_PointFromText
+  - Indexes: R-tree spatial index for POINT columns
+  - Units: Distance in meters
+
+  **Common Queries:**
+  - ST_Distance_Sphere(location, POINT(lng, lat)) <= radius
+  - ORDER BY ST_Distance_Sphere(location, POINT(lng, lat))
+  - ST_GeomFromText('POINT(lng lat)', 4326)
+
+  **Data Integrity:**
+  - Foreign key constraints with CASCADE delete
+  - Unique constraints on email, tokens
+  - Composite unique on (userId, serviceId) for favorites
+  - Enum constraints on role, status, type
+  - Default values for counts and booleans
+end note
+
+@enduml
